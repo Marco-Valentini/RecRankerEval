@@ -1,1 +1,402 @@
-# RecRankerEval
+# RecRankerEval: A Reproducible Framework for Deploying and Evaluating LLM-based Top-k Recommenders
+
+This repository hosts the code of RecRankerEval. 
+This project builds upon and extends components from SELFRec and RecRanker. 
+We sincerely thank the authors for their open-source contributions, which greatly facilitated our work.
+
+## 1.Install environment
+
+### Option 1: Using the Provided Docker Image (Recommended)
+
+We implement RecRankerEval in Python Version 3.10.13, and PyTorch Version 2.5.1+cu121.
+
+The ./RecRankerEval/requirements.txt file lists the core dependencies.
+
+Our experiments are conducted on a computing cluster.
+
+Pull the prebuilt Docker image as the base environment:
+
+```bash
+docker pull reconmmendationsystem/notebook:cuda12.1_unsloth
+```
+
+After starting the container, install the following additional packages in order to avoid version conflicts:
+
+```bash
+pip install vllm==0.6.5
+
+pip install transformers==4.47.0
+
+pip install https://download.pytorch.org/whl/cu121/torch-2.5.1%2Bcu121-cp310-cp310-linux_x86_64.whl#sha256=92af92c569de5da937dd1afb45ecfdd598ec1254cf2e49e3d698cb24d71aae14
+
+pip install accelerate==1.2.0
+
+pip install peft==0.13.2
+
+pip install jsonlines
+
+pip install flash-attn==2.8.3
+```
+
+### Option 2: Installing Directly on a Local or Cluster Environment (Without Docker)
+
+If you do not wish to use the provided Docker image, you can install the dependencies directly in a fresh Python 3.10 environment
+
+*Step 1. Create and activate a virtual environment (optional but recommended):*
+
+```bash
+conda create -n recrankereval python=3.10
+conda activate recrankereval
+```
+
+or
+
+```bash
+python3.10 -m venv recrankereval
+source recrankereval/bin/activate
+```
+
+*Step 2. Install dependencies from requirements.txt:*
+
+```bash
+pip install -r ./RecRankerEval/requirements.txt
+```
+
+*Step 3. Install specific versions to ensure compatibility (same order as Method 1):*
+
+This method allows you to run RecRankerEval without using Docker, but make sure your CUDA version matches the PyTorch wheel you install (above uses CUDA 12.1).
+
+## 2. Quick Start
+
+Run main.py in the ./RecRankerEval/ directory, and the output file is saved in the ./RecRankerEval/train_and_inference/pointwise path:
+
+### Instruction Tuning Llama2 and Inference
+```bash
+python main.py \
+  --task_type fine_tune \
+  --model_type meta-llama/Llama-2-7b-hf \
+  --training_type pointwise \
+  --token  \
+  --epochs 3 \
+  --batch_size 2 \
+  --grad_acc_steps 64 \
+  --lr 2e-5
+```
+
+### Instruction Tuning Llama3 and Inference
+```bash
+python main.py \
+  --task_type fine_tune \
+  --model_type meta-llama/Llama-3.1-8B-Instruct \
+  --training_type pointwise \
+  --token  \
+  --epochs 3 \
+  --batch_size 2 \
+  --grad_acc_steps 64 \
+  --lr 2e-5
+```
+
+### Zero_shot for Llama2
+```bash
+python main.py \
+  --task_type zero_shot \
+  --token  \
+  --model_type meta-llama/Llama-2-7b-hf \
+  --training_type pointwise \
+  --inference_batch_size 80 \
+  --tensor_parallel_size 1
+```
+
+### Load Checkpoint, Instruction Tuning Llama3 and Inference
+```bash
+python main.py \
+     --task_type fine_tune \
+     --model_type meta-llama/Llama-2-7b-hf \
+     --training_type pointwise \
+     --token  \
+     --adapter_dir ./checkpoint \
+     --skip_train
+```
+
+### Use GPT to Inference
+```bash
+python main.py \
+  --task_type zero_shot \
+  --openai_api_key  \
+  --model_type gpt-3.5-turbo-0125 \
+  --training_type pointwise
+```
+
+The quick start examples are for pointwise, users can obtain the input files (i.e., pairwise.jsonl, pairwisetest.jsonl ) of pairwise & listwise instruction tuning by following step 3,4 and 5.
+
+## 3. Process the Original Dataset
+
+### Load original dataset
+
+All the original rating.csv files and item.csv files are in the ./RecRankerEval/dataset directory.
+
+### Preprocessing the dataset
+
+ML-100K and ML-1M can be used directly, while BookCrossing and AmazonMusic need preprocessing.
+
+In ./RecRankerEval/dataprocess/bookcrossing, use bookcrossing-data-process.ipynb to process the original data. 
+The input files are the ratings file book-crossing.csv and item information file book-crossing.item.csv decompressed in ./RecRankerEval/dataset/bookcrossing. 
+The output files are the processed bookcross8-4.csv and book-crossing.item-12.csv.
+
+In ./RecRankerEval/dataprocess/amazonmusic, use amazonmusic-data-process.ipynb to process the original data.
+The input files are the rating file inter.csv and item information file item.csv decompressed in ./RecRankerEval/dataset/amazonmusic.
+The output files are the processed inter2-5.csv and itemnew-processed.csv.
+
+### Split the dataset
+
+Use ./RecRankerEval/dataprocess/splitdataset.py in each dataset folder to split the preprocessed rating files into datasets.
+The input files are the preprocessed rating files in each dataset folder in ./RecRankerEval/dataset/.
+The output files are like.txt, dislike.txt, train_set.txt, valid_set.txt, and test_set.txt.
+The output files are saved in the ./RecRankerEval/dataset/ directory corresponding to the dataset.
+
+## 4. Run the Initial Recommendation Model
+
+In order to obtain the pkl file required to build prompts as well as the initial recommendation list and ground truth, RecRankerEval needs to run the initial recommendation model first.
+
+### Processing Format
+
+Use ./RecRankerEval/dataprocess/processing format.ipynb to modify the dislike.txt of the corresponding dataset to a file with spaces as delimiters to adapt to the initial recommendation model.
+The input file is dislike.txt of the corresponding dataset, which is obtained from step 3.
+The output file is dislike_set.txt of the corresponding dataset.
+
+### Run the Initial Recommendation Model
+
+Run ./RecRankerEval/top-k-recommendation.py to use different initial recommendation models to obtain the relevant files needed to build prompts later.
+The input files are train_set.txt, test_set.txt, valid_set.txt, and dislike_set.txt in the corresponding dataset files in the ./RecRankerEval/dataset/ directory, which are obtained from step 3.
+The output files are the initial recommendation list file Modelrec_save_dict.csv, the ground truth file Modelgt_save_dict.csv in the model_result subfolder of the corresponding dataset file in the ./RecRankerEval/dataset/ directory, and user.pkl, user_id_mapping.pkl, rating_matrix.pkl, pred.pkl, item.pkl, item_id_mapping.pkl, and item_id_mapping-all.pkl in the ./RecRankerEval/dataset/ directory.
+
+The parameters and configuration files of the model are in the files corresponding to the model name in the ./RecRankerEval/conf directory.
+
+***Configure the first dimension of RecRankerEval - initial recommendation model***
+
+RecRankerEval supports the use of different initial recommendation models.
+The name of the initial recommendation model can be modified in the running code, for example:
+
+```bash
+python top-k-recommendation.py --model LightGCN
+```
+
+RecRankerEval can enable users to extend and replace the initial recommendation model for use.
+To change the initial recommendation model, follow the steps below:
+Save the initial recommendation model in the ./RecRankerEval/model directory, and add the code mentioned above to generate and save csv and pkl files according to the existing model files in RecRankerEval;
+Create a conf configuration file corresponding to the new model name in the ./RecRankerEval/conf directory;
+Add the new model name in the top-k-recommendation.py file.
+
+***Configure the second dimension of RecRankerEval - dataset***
+
+In addition, RecRankerEval supports users to change the dataset to run the initial recommendation model:
+If it is an existing dataset, the user can directly modify the name of the dataset in the running code, for example:
+
+```bash
+python top-k-recommendation.py --dataset ml-1m
+```
+
+If the user wants to add additional datasets, follow the steps below:
+Replace the dataset name in the corresponding initial recommendation model conf file in the ./RecRankerEval/conf directory;
+Replace the dataset name in the top-k-recommendation.py file;
+Create a new dataset in ./RecRankerEval/dataset, and create a model_result subfolder in the dataset.
+
+## 5. Build Train and Test Prompts, Run Inference with the Instruction-Tuned LLM
+
+### Organise Input Files for Train Prompts
+
+The input files are: train_set.txt, dislike.txt, movie_info.csv, which are obtained from step 3;
+and user.pkl, user_id_mapping.pkl, rating_matrix.pkl, pred.pkl, item.pkl, item_id_mapping.pkl, and item_id_mapping-all.pkl, which are obtained from step 4.
+The output files are: pointwise.jsonl, pairwise.jsonl and listwise.jsonl.
+Put all input files in the ./RecRankerEval/train_and_inference/ directory.
+
+### Build Train Prompts
+
+***Configure the third dimension of RecRankerEval - user sampling***
+
+Run make_train_1.py or make_train_db.py in the ./RecRankerEval/train_and_inference/ directory to generate pointwise.jsonl, pairwise.jsonl and listwise.jsonl for training respectively.
+Users can change the sample_method in the file to implement different user sampling methods.
+
+```bash
+python make-train-1.py --datasets ml-1m --sample-method kmeans
+```
+
+```bash
+python make-train-db.py --datasets ml-1m --sample-method db
+
+```
+
+### Organise Input Files for Inference Prompts
+
+The input files are: train_set.txt, dislike.txt, movie_info.csv, which are obtained from step 3;
+and user.pkl, user_id_mapping.pkl, rating_matrix.pkl, pred.pkl, item.pkl, item_id_mapping.pkl, item_id_mapping-all.pkl, item information file, Modelgt_save_dict.csv and Modelrec_save_dict, which are obtained from step 4.
+The output files are: pointwisetest.jsonl, pairwisetest.jsonl and listwisetest.jsonl.
+Put all input files in the ./RecRankerEval/train_and_inference/ directory.
+
+### Build Inference Prompts
+
+Run make-testprompt.py in the ./RecRankerEval/train_and_inference/ directory to pointwisetest.jsonl, pairwisetest.jsonl, pairwise_invtest.jsonl and listwisetest.jsonl for inference respectively.
+
+```bash
+python make-testprompt.py --datasets ml-1m --models LightGCN --rec-list ./Light1rec_save_dict1.csv --gt-list ./Light1gt_save_dict1.csv
+```
+
+For the pairwise instruction tuning method, user needs to run ./RecRankerEval/dataprocess/merge-allpairwise-testprompt.py first to merge the two jsonl files for forward and reverse comparison.
+The input is pairwisetest.jsonl and pairwise_invtest.jsonl, and the output is pairwiseall.jsonl.
+
+For pointwise without data leakage, we provide two files to process the training and reasoning prompts of pointwise respectively.
+./RecRankerEval/dataprocess/fix-pointwise-trainprompt.py is used to process the training prompt of pointwise.
+./RecRankerEval/dataprocess/fix-pointwise-testprompt.py is used to process the inference prompt of pointwise.
+
+Copy the previously generated training and test prompts to the dataset directory corresponding to ./RecRankerEval/train_and_inference, and then run the ./RecRankerEval/train_and_inference/main.py to instruction tuning LLM and then inference (as shown in the Quick Start).
+
+The output is inference.txt.
+
+```bash
+#1 Instruction tuning Llama2 and inference
+python main.py \
+  --task_type fine_tune \
+  --model_type meta-llama/Llama-2-7b-hf \
+  --training_type pointwise \
+  --token  \
+  --epochs 3 \
+  --batch_size 2 \
+  --grad_acc_steps 64 \
+  --lr 2e-5
+```
+
+***Configure the forth and fifth dimension of RecRankerEval - Instruction tuning method and LLM backbone***
+
+RecRankerEval supports using different LLM backbones and different instruction tuning method.
+In the command of running main.py, change task_type to zero_shot to switch to zero shot learning; change model_type to switch to Llama3 or gpt3.5; change training_type to switch to listwsie or pointwise. Detailed configuration information is located in ./RecRankerEval/train_and_inference/config.py. Quick Start provides running examples of different configurations.
+
+## 6. Process the Output of Inference for Different Instruction Tuning Methods
+
+After inference is completed, copy the output file inference.txt from step 4 to the ./RecRankerEval/dataprocess/process-inference-results directory, and then run the ipynb script to process the data according to the corresponding ranking method.
+We provide examples of processing the results of the variants with LightGCN as the initial model on ML-1M in Table 4 of the paper in the ./RecRankerEval/dataprocess/process-inference-results/example directory.
+
+## Code Structure
+
+
+```python
+.
+├── RecRankerEval
+│   ├── *dataprocess*
+│       ├── amazonmusic
+│           ├── amazonmusic-data-process.ipynb
+│           └── splitdataset.py
+│       ├── bookcrossing
+│           ├── bookcrossing-data-process.ipynb
+│           └── splitdataset.py
+│       ├── ml-100k
+│           ├── splitdataset.ipynb
+│       ├── ml-1m
+│           ├── splitdataset.ipynb
+│       ├── process-inference-results
+│           ├── example1
+│           ├── example2
+│           ├── hybrid-output-process.ipynb
+│           ├── listwise-output-process.ipynb
+│           ├── pairwise-output-process.ipynb
+│           └── pointwise-output-process.ipynb
+│       ├── processing-format.ipynb
+│       ├── merge-allpairwise-testprompt.py
+│       ├── fix-pointwise-trainprompt.py
+│       └── fix-pointwise-testprompt.py
+│   ├── *train_and_inference*
+│       ├── listwise
+│       ├── pointwise
+│           ├── merged_model
+│           ├── results
+│           ├── trained_model
+│           ├── checkpoint
+│               ├── adapter_config.json
+│               ├── adapter_model.safetensors
+│               └── training_args.bin
+│       ├── pairwise
+│       ├── config.py
+│       ├── gptinference.py
+│       ├── inference.py
+│       ├── make_testprompt.py
+│       ├── make_train_1.py
+│       ├── make_train_db.py
+│       ├── train.py
+│       ├── zeroshot.py
+│       ├── pointwise.jsonl
+│       └── pointwisetest.jsonl
+│   ├── base
+│       ├── graph_recommender.py
+│       ├── recommender.py
+│       ├── seq_recommender.py
+│       ├── ssl_interface.py
+│       ├── tf_interface.py
+│       └── torch_interface.ipynb
+│   ├── *conf*
+│       ├── LightGCN.py
+│       ├── MF.py
+│       └── XSimGCL.py
+│   ├── data
+│       ├── augmentor.py
+│       ├── data.py
+│       ├── feature.py
+│       ├── graph.py
+│       ├── loader.py
+│       ├── sequence.py
+│       ├── social.py
+│       └── ui_graph.py
+│   ├── dataset
+│       ├── amazonmusic
+│           ├── dislike.txt
+│           ├── inter.rar
+│           ├── item.csv
+│           ├── like.txt
+│           ├── test_set.txt
+│           └── train_set.txt
+│       ├── bookcrossing
+│           ├── dislike.txt
+│           ├── book-crossing.item.rar
+│           ├── book-crossing.rar
+│           ├── like.txt
+│           ├── test_set.txt
+│           └── train_set.txt
+│       ├── ml-100k
+│           ├── dislike.txt
+│           ├── dislike_set.txt
+│           ├── movie_info.csv
+│           ├── ratings.csv
+│           ├── like.txt
+│           ├── valid_set.txt
+│           ├── test_set.txt
+│           ├── train_set.txt
+│           └── model_result
+│       ├── ml-1m
+│           ├── dislike.txt
+│           ├── movie_info_ml1m.csv
+│           ├── ratings.csv
+│           ├── like.txt
+│           ├── valid_set.txt
+│           ├── test_set.txt
+│           └── train_set.txt
+│   ├── log
+│   ├── model
+│       ├── graph
+│           ├── LightGCN.py
+│           ├── MF.py
+│           └── XSimGCL.py
+│       └── sequential
+│   ├── results
+│   ├── util
+│       ├── algorithm.py
+│       ├── conf.py
+│       ├── evaluation.py
+│       ├── logger.py
+│       ├── loss_tf.py
+│       ├── loss_torch.py
+│       ├── sampler.py
+│       └── structure.py
+│   ├── *main.py*
+│   ├── *initialRec.py*
+│   └── requirements.txt
+└── README.md
+```
+```
